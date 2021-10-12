@@ -1,7 +1,7 @@
 import {createContext, ReactNode, useEffect, useState} from "react";
 import {destroyCookie, parseCookies, setCookie} from 'nookies'
 import Router from 'next/router'
-import {api} from "../services/api";
+import { api } from '../services/apiClient'
 
 type User = {
   email: string;
@@ -15,7 +15,8 @@ type SignInCredentials = {
 };
 
 type AuthContextData = {
-  signIn(credentials: SignInCredentials): Promise<void>;
+  signIn: (credentials: SignInCredentials) => Promise<void>;
+  signOut: () => void;
   user: User;
   isAuthenticated: boolean;
 };
@@ -26,9 +27,15 @@ type AuthProviderProps = {
 
 export const AuthContext = createContext({} as AuthContextData);
 
+//foi colocado dessa forma pq esse contexto está sendo chamado pelo next tb, e o broadcast não funciona no lado do servidor
+//por isso foi usado o let, e colocado dentro do useEffect (que só executa do lado do cliente)
+let authChannel: BroadcastChannel;
+
 export function signOut() {
   destroyCookie(undefined, 'nextauth.token')
   destroyCookie(undefined, 'nextauth.refreshToken')
+
+  authChannel.postMessage('signOut')
 
   Router.push('/')
 }
@@ -36,6 +43,31 @@ export function signOut() {
 export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User>()
   const isAuthenticated = !!user;
+
+  useEffect(() => {
+    return () => {
+      authChannel = new BroadcastChannel('auth')
+
+      authChannel.onmessage = (message) => {
+        console.log(message.data);
+        switch (message.data) {
+          case 'signOut':
+            signOut();
+            // authChannel.close()
+            break;
+          case 'signIn':
+            //logar todas as abas abertas
+            // Router.reload()
+            // window.location.replace("http://localhost:3000/dashboard");
+            Router.push('/dashboard')
+            break;
+          default:
+            break;
+        }
+      }
+    };
+  }, []);
+
 
   // A primeira vez que o usuário acessa a aplicação, iremos pegar as informações de permissão e roles
   useEffect(() => {
@@ -89,13 +121,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
       api.defaults.headers['Authorization'] = `Bearer ${token}`
 
       Router.push('/dashboard')
+
+      authChannel.postMessage('signIn')
+
     } catch (error) {
       console.log(error)
     }
   }
 
   return (
-    <AuthContext.Provider value={{ signIn, isAuthenticated, user }}>
+    <AuthContext.Provider value={{ signIn, signOut, isAuthenticated, user }}>
       {children}
     </AuthContext.Provider>
   );
